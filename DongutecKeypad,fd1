@@ -1,0 +1,82 @@
+REM >DongutecKeypad
+REM
+REM Reading a keypad through USB -> I2C.
+REM
+REM USB I2C interface: https://thepihut.com/products/usb-uart-i2c-debugger
+REM Keypad and interface: https://www.aliexpress.com/item/32829892555.html
+REM
+REM USB I2C interface is a MCP2221 USB to I2C/UART/GPIO device.
+REM Keypad interface is a MCP23008 I2C to GPIO device.
+REM
+REM (USB interface only required when using Pyromaniac with the MCP2221
+REM IIC implementation)
+REM
+REM The keypad is connected to a MCP23008 controller, which is an I2C
+REM controlled 8 pin GPIO expander.
+REM In order to access the GPIO pins it is necessary to confgure the I2C
+REM device appropriately, and then scan the rows followed by the columns.
+REM By default the I2C device is configured to be I2C address 0x27. The
+REM contacts on the board can be soldered change this address, each bit
+REM negating the default address.
+REM
+REM The rows will be in the low bits, and the columns in the high bits.
+REM If you connect the cable a different way around you may find that
+REM this is reversed, but this was how I connected it.
+REM
+REM What we will do is to power the bottom 4 bits, and read the top
+REM 4 bits. This will tell us which row the pressed button is on.
+REM Then we change the inputs around and power the top 4 bits, and
+REM read the bottom 4 bits. This will tell us the column the button
+REM is on.
+REM Using a lookup table we can see what key was actually pressed
+REM with a lookup of the two values.
+
+REM Address to communicate with
+i2c_address = &27
+
+REM Memory for transferring to/from IIC
+DIM b% 8
+:
+PROCkeypad_setup
+:
+WHILE TRUE
+   PRINT"Key: ";FNkeypad_key
+ENDWHILE
+:
+END
+:
+DEFPROCmcp23008_write1(addr%, byte%)
+b%?0=addr%
+b%?1=byte%
+SYS "IIC_Control", (i2c_address<<1), b%, 2
+ENDPROC
+:
+DEFFNmcp23008_read1(addr%)
+LOCAL flags%
+b%?0=addr%
+SYS "IIC_Control", (i2c_address<<1), b%, 1
+SYS "IIC_Control", (i2c_address<<1) OR 1, b%, 1 TO ;flags%
+=b%?0
+:
+DEFPROCkeypad_setup
+DIM keypad_lookup% 256
+LOCAL key%, row_mask%, column_mask%
+FOR key% = 0 TO 255
+    keypad_lookup%?key%=255
+NEXT
+FOR key% = 0 TO 15
+    row_mask% = 1<<(3-(key% AND 3))
+    column_mask% = 16<<(3-(key%>>2))
+    keypad_lookup%?(row_mask% OR column_mask%)=key%
+NEXT
+PROCmcp23008_write1(1, 255):REM All input pins are inverted
+PROCmcp23008_write1(6, 255):REM Set pins to 1 with pull up
+ENDPROC
+:
+DEFFNkeypad_key
+LOCAL row_value%, column_value%
+PROCmcp23008_write1(0, 240):REM Set top 4 pins as input
+row_value% = FNmcp23008_read1(9)
+PROCmcp23008_write1(0, 15):REM Set bottom 4 pins as input
+column_value% = FNmcp23008_read1(9)
+=keypad_lookup%?(row_value% OR column_value%)
